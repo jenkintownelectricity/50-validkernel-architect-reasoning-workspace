@@ -1,0 +1,58 @@
+name: Claude Context Guard
+
+# Rejects any PR that tries to ADD .claude/CLAUDE.md when the file
+# already exists on the base branch. Add/add conflicts on this file
+# are a planetary defect pattern (see gstack
+# reports/fleet/CLAUDE_CONTEXT_CONFLICT_SCAN.md). PRs must MODIFY
+# the existing file, not add a duplicate.
+
+on:
+  pull_request:
+    paths:
+      - '.claude/CLAUDE.md'
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+          path: base
+
+      - name: Checkout head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          path: head
+
+      - name: Verify CLAUDE.md is modified, not added
+        run: |
+          set -e
+          BASE_HAS="no"
+          HEAD_HAS="no"
+          [ -f base/.claude/CLAUDE.md ] && BASE_HAS="yes"
+          [ -f head/.claude/CLAUDE.md ] && HEAD_HAS="yes"
+          echo "base has .claude/CLAUDE.md: $BASE_HAS"
+          echo "head has .claude/CLAUDE.md: $HEAD_HAS"
+          if [ "$BASE_HAS" = "yes" ] && [ "$HEAD_HAS" = "yes" ]; then
+            # File exists on both sides — check for content drift at minimum
+            if diff -q base/.claude/CLAUDE.md head/.claude/CLAUDE.md >/dev/null 2>&1; then
+              echo "No change to .claude/CLAUDE.md. Allowing."
+            else
+              echo "MODIFIED — allowed."
+            fi
+            exit 0
+          fi
+          if [ "$BASE_HAS" = "no" ] && [ "$HEAD_HAS" = "yes" ]; then
+            echo "ADDED — allowed (first installation)."
+            exit 0
+          fi
+          if [ "$BASE_HAS" = "yes" ] && [ "$HEAD_HAS" = "no" ]; then
+            echo "::error::Removing .claude/CLAUDE.md is not permitted. Update content, do not delete."
+            exit 1
+          fi
+          echo "File absent on both sides. Nothing to guard."
